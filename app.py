@@ -682,14 +682,25 @@ elif mode == "🧪 CSL Ablation (ON vs OFF)":
     ab_suite_name = st.selectbox("Attack suite", list(ab_suite_map.keys()))
     ab_attacks = ALL_ATTACKS if ab_suite_map[ab_suite_name] == "full" else ATTACK_DATASET[ab_suite_map[ab_suite_name]]
     ab_full = len(ab_attacks)
-    ab_start, ab_end = st.slider(
-        "Attack range",
-        min_value=0,
-        max_value=ab_full,
-        value=(0, min(5, ab_full)),
-        step=1,
-        label_visibility="collapsed",
-    )
+    if "ab_select_all" not in st.session_state:
+        st.session_state.ab_select_all = False
+    col_slider, col_all = st.columns([5, 1])
+    with col_all:
+        if st.button("⚡ All", help=f"Select all {ab_full} attacks (runs {ab_full * 2} evaluations)"):
+            st.session_state.ab_select_all = True
+            st.rerun()
+    with col_slider:
+        ab_default_end = ab_full if st.session_state.ab_select_all else min(5, ab_full)
+        ab_start, ab_end = st.slider(
+            "Attack range",
+            min_value=0,
+            max_value=ab_full,
+            value=(0, ab_default_end),
+            step=1,
+            key="ab_slider",
+            label_visibility="collapsed",
+        )
+    st.session_state.ab_select_all = (ab_start, ab_end) == (0, ab_full)
     ab_selected = ab_attacks[ab_start:ab_end]
     st.markdown(
         f"**Suite:** `{ab_suite_name}` — attacks {ab_start}–{ab_end} selected ({len(ab_selected)} / {ab_full}) "
