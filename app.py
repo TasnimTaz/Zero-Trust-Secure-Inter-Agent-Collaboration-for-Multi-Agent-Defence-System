@@ -397,7 +397,7 @@ with st.sidebar:
         "Select Mode",
          ["💬 Interactive",
          "📊 Evaluate — Moderate/Intermediate", "📊 Evaluate — Hard/Advanced",
-         "📊 Evaluate — Extreme/Coordinator-Level", "📊 Evaluate — Full (90 attacks)",
+         "📊 Evaluate — Extreme/Coordinator-Level", "📊 Evaluate — Full (300 attacks)",
          "🔬 CSL Attack Harness",
          "🧪 CSL Ablation (ON vs OFF)"],
         label_visibility="collapsed",
@@ -677,7 +677,7 @@ elif mode == "🧪 CSL Ablation (ON vs OFF)":
         "Moderate / Intermediate": "moderate_intermediate",
         "Hard / Advanced": "hard_advanced",
         "Extreme / Coordinator-Level": "extreme_coordinator",
-        "Full (90 attacks)": "full",
+        "Full (300 attacks)": "full",
     }
     ab_suite_name = st.selectbox("Attack suite", list(ab_suite_map.keys()))
     ab_attacks = ALL_ATTACKS if ab_suite_map[ab_suite_name] == "full" else ATTACK_DATASET[ab_suite_map[ab_suite_name]]
@@ -745,7 +745,7 @@ else:
         "📊 Evaluate — Moderate/Intermediate":     ("moderate_intermediate", ATTACK_DATASET["moderate_intermediate"]),
         "📊 Evaluate — Hard/Advanced":              ("hard_advanced",         ATTACK_DATASET["hard_advanced"]),
         "📊 Evaluate — Extreme/Coordinator-Level":  ("extreme_coordinator",   ATTACK_DATASET["extreme_coordinator"]),
-        "📊 Evaluate — Full (90 attacks)":          ("full",                  ALL_ATTACKS),
+        "📊 Evaluate — Full (300 attacks)":          ("full",                  ALL_ATTACKS),
     }
     suite_name, attacks = suite_map[mode]
     full_count = len(attacks)

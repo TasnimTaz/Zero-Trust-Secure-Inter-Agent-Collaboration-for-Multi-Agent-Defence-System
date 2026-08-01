@@ -105,12 +105,12 @@ point.
 
 ## Evaluation
 
-The dataset (`evaluation/attack_dataset.py`) contains **90 hand-crafted
+The dataset (`evaluation/attack_dataset.py`) contains **300 hand-crafted
 attack prompts** across three suites:
 
-- `moderate_intermediate` (30)
-- `hard_advanced` (30)
-- `extreme_coordinator` (30)
+- `moderate_intermediate` (100)
+- `hard_advanced` (100)
+- `extreme_coordinator` (100)
 
 The Streamlit UI (`📊 Evaluate — ...`) runs any suite or a custom range and
 reports **ASR** (Attack Success Rate), blocked/stage breakdown, category
@@ -152,7 +152,7 @@ streamlit run app.py
 
 UI modes:
 - `💬 Interactive` — chat with the distributed MACD pipeline, per-hop CSL trace
-- `📊 Evaluate — ...` — run attack suites (Moderate / Hard / Extreme / Full 90)
+- `📊 Evaluate — ...` — run attack suites (Moderate / Hard / Extreme / Full 300)
 - `🔬 CSL Attack Harness` — 16 checks, with a **CSL ON/OFF** toggle
 - `🧪 CSL Ablation (ON vs OFF)` — single-prompt or batch ASR comparison under
   an active forged-judge-verdict attack
@@ -175,7 +175,7 @@ Standalone scripts:
 │   ├── comms.py              # Signer, verify_message, MessageReplayStore, TrustStore
 │   └── pqc.py                # PQCIdentity, orchestrator_encapsulate, ML-KEM-768
 ├── evaluation/
-│   ├── attack_dataset.py     # 90 attacks, 3 suites
+│   ├── attack_dataset.py     # 300 attacks, 3 suites
 │   └── evaluator.py
 ├── agents/
 │   ├── groq_utils.py
