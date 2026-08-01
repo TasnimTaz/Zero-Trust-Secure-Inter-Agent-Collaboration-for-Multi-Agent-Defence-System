@@ -4,6 +4,7 @@ import hashlib
 import hmac as _hmac
 import multiprocessing
 import os
+import pickle as _pickle
 import secrets
 import sys
 import warnings
@@ -104,17 +105,26 @@ def _agent_worker(agent_name: str, model: str, conn):
             break
         try:
             env = _execute(agent, agent_name, task)
+            if task.get("csl", True):
+                conn.send(env)
+            else:
+                if verify_message(env, session_key) and isinstance(env.get("payload"), dict):
+                    conn.send(env["payload"])
+                else:
+                    conn.send({
+                        "agent": agent_name,
+                        "sender": agent_name,
+                        "error": "worker could not unwrap own envelope for CSL-off passthrough",
+                    })
         except Exception as e:
-            env = agent.signer.sign({
-                "agent": agent_name,
-                "sender": agent_name,
-                "error": f"worker exception: {e}",
-            })
-        if task.get("csl", True):
-            conn.send(env)
-        else:
-            verify_message(env, session_key)
-            conn.send(env["payload"])
+            try:
+                conn.send({
+                    "agent": agent_name,
+                    "sender": agent_name,
+                    "error": f"worker exception: {e}",
+                })
+            except (EOFError, OSError):
+                break
 
 
 class MACDPipelineV2MP:
@@ -187,10 +197,44 @@ class MACDPipelineV2MP:
     def _call(self, name: str, csl: bool = True, **task):
         task["csl"] = csl
         conn, _ = self._agents[name]
-        conn.send(task)
-        return conn.recv()
+        try:
+            conn.send(task)
+            return conn.recv()
+        except (EOFError, OSError, _pickle.UnpicklingError, ValueError):
+            print(f"[MP:{name}] worker connection lost — restarting and retrying")
+            self._restart_worker(name)
+            conn, _ = self._agents[name]
+            conn.send(task)
+            return conn.recv()
+
+    def _restart_worker(self, name: str) -> None:
+        model = AGENT_MODELS[name]
+        old_conn, old_proc = self._agents[name]
+        try:
+            old_conn.close()
+        except Exception:
+            pass
+        old_proc.terminate()
+        old_proc.join(timeout=2)
+        parent_conn, child_conn = self._ctx.Pipe(duplex=True)
+        proc = self._ctx.Process(target=_agent_worker, args=(name, model, child_conn), daemon=True)
+        proc.start()
+        child_conn.close()
+        session_key, pqc_used = self._handshake(name, parent_conn)
+        self._session_keys[name] = session_key
+        self._agents[name] = (parent_conn, proc)
+        self._procs.append(proc)
+        self.handshake_log.append({
+            "agent": name,
+            "method": "ML-KEM-768 (PQC)" if pqc_used else "classical pre-shared (fallback)",
+            "pid": proc.pid,
+            "channel": "IPC pipe (restarted after worker crash)",
+            "status": "re-handshake OK (HMAC confirmed)" if pqc_used else "re-delivered key",
+        })
 
     def _hop(self, signed_msg: dict, key_name: str, stage_name: str):
+        if not isinstance(signed_msg, dict):
+            signed_msg = {"sender": key_name, "error": "non-dict message"}
         if not self.csl_enabled:
             payload = signed_msg.get("payload", signed_msg)
             trace_entry = {
@@ -222,7 +266,10 @@ class MACDPipelineV2MP:
             return None, False, trace_entry
 
         key = self._session_keys.get(key_name) or AGENT_KEYS.get(key_name)
-        ok = verify_message(signed_msg, key, replay_store=self.replay_store)
+        try:
+            ok = verify_message(signed_msg, key, replay_store=self.replay_store)
+        except Exception:
+            ok = False
         if ok:
             self.trust_store.record_success(key_name)
         else:
