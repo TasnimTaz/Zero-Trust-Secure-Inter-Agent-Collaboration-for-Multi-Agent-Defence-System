@@ -11,6 +11,28 @@ Groq-backed prompt-injection defense system focused on the current MACD-v2 pipel
 - hard-fail enforcement for duplicate agent keys
 - Streamlit UI for interactive testing and evaluation
 
+### Communication Security Layer (CSL) Scope
+
+The Zero-Trust CSL protects **only the three expert hops** of the pipeline:
+
+```text
+User Prompt
+  -> Pattern Expert -> CSL -> Intent Expert -> CSL -> Category Expert -> CSL -> Judge
+  -> Execution Validation (Domain LLM + Guard) -> Final Decision
+```
+
+Each CSL hop provides: Authentication + Encryption (AES-256-GCM, PQC-derived
+session keys when available) + Integrity Verification + Anti-Replay Protection
++ Trust Verification.
+
+> **Important (honest scope):** The **Judge, Domain LLM, and Guard stages are
+> NOT wrapped in the CSL.** They are the final decision-making stages and their
+> messages are not signed/verified/trust-checked. The `AGENT_KEY_JUDGE` config
+> key currently exists but is not used by any signer. So the "every message
+> continuously verified" claim applies only to the three expert hops, not the
+> full pipeline. If full-chain Zero-Trust is desired, the Judge and the
+> Execution Validation stage would need to be added to the CSL.
+
 ## Setup
 
 Install the Python dependencies:
@@ -100,4 +122,5 @@ The script writes JSON and JSONL results into `logs/`.
 ## Notes
 
 - If `liboqs-python` or the liboqs build dependencies are missing, the UI will show `classical` instead of `PQC`.
+- PQC (ML-KEM-768) session-key derivation currently covers only the three expert agents (Pattern, Intent, Category) in `macd_pipeline_v2.py`.
 - Duplicate agent keys are rejected unless `ALLOW_SHARED_KEYS=1` is set explicitly for a controlled dev/test run.
