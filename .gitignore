@@ -3,4 +3,5 @@ __pycache__/
 logs/
 .env
 .streamlit
-.venv-py313-old
+.venv-py313-oldcheckpoints/
+checkpoints/

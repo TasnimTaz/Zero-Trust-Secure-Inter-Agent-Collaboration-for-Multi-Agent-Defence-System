@@ -59,6 +59,33 @@ from config import (
     MACD_V2_JUDGE_MODEL,
 )
 
+CHECKPOINT_DIR = Path(__file__).resolve().parent / "checkpoints"
+CHECKPOINT_DIR.mkdir(exist_ok=True)
+
+
+def _checkpoint_path(kind: str, *parts) -> Path:
+    key = "_".join(str(p).replace("/", "_").replace(" ", "_").replace(":", "_") for p in parts)
+    return CHECKPOINT_DIR / f"{kind}_{key}.jsonl"
+
+
+def _load_checkpoint(path: Path) -> list:
+    if not path.exists():
+        return []
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line:
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return rows
+
+
+def _append_checkpoint(path: Path, row: dict) -> None:
+    with open(path, "a", encoding="utf-8") as file_handle:
+        file_handle.write(json.dumps(row) + "\n")
+
 st.set_page_config(
     page_title="Zero-Trust Secure Inter-Agent Collaboration for Multi-Agent Defence Systems",
     page_icon="🛡️",
@@ -708,28 +735,58 @@ elif mode == "🧪 CSL Ablation (ON vs OFF)":
     )
 
     ab_run_btn = st.button("▶ Run ASR Comparison (CSL ON vs OFF, attacker-injected)", type="primary", use_container_width=True)
+    ab_restart = st.checkbox("🔄 Restart from scratch (ignore saved progress for this range)", value=False)
+
+    ab_cp_display = _checkpoint_path("ablation", ab_suite_name, ab_start, ab_end)
+    ab_saved_n = len(_load_checkpoint(ab_cp_display))
+    if ab_saved_n:
+        st.caption(
+            f"💾 **{ab_saved_n}/{ab_full} attack(s)** saved in checkpoint for this range — "
+            "click **Run** to resume from where it stopped."
+        )
 
     if ab_run_btn:
-        ab_progress = st.progress(0)
+        cp = _checkpoint_path("ablation", ab_suite_name, ab_start, ab_end)
+        if ab_restart:
+            cp.unlink(missing_ok=True)
+        done_rows = _load_checkpoint(cp)
+        done_ids = {r["id"] for r in done_rows}
+        todo = [a for a in ab_selected if a["id"] not in done_ids]
+        resumed_n = len(done_rows)
+        total_n = len(ab_selected)
+
+        ab_progress = st.progress(resumed_n / total_n if total_n else 0)
         ab_status = st.empty()
-        ab_rows = []
-        ab_total = len(ab_selected)
-        ab_done = 0
-        for attack in ab_selected:
+        ab_rows = list(done_rows)
+        ab_done = resumed_n
+
+        if resumed_n:
+            ab_status.info(f"Resuming — {resumed_n}/{total_n} attacks already done (saved checkpoint).")
+        for attack in todo:
             mode_rows = {}
             for label, csl in [("csl_on", True), ("csl_off", False)]:
                 ab_status.markdown(f"`[{label}]` Testing via Groq API `{attack['id']}` — {attack['category']}")
                 res = macd_v2_pipeline.run(attack["input"], csl_enabled=csl, attacker_inject=True)
                 mode_rows[label] = res["blocked"]
                 time.sleep(1)
-            ab_rows.append({
+            row = {
                 "id": attack["id"],
                 "category": attack["category"],
                 "CSL ON (blocked)": "🚫" if mode_rows["csl_on"] else "❌ BYPASS",
                 "CSL OFF (blocked)": "🚫" if mode_rows["csl_off"] else "❌ BYPASS",
-            })
+            }
+            _append_checkpoint(cp, row)
+            ab_rows.append(row)
             ab_done += 1
-            ab_progress.progress(ab_done / ab_total)
+            ab_progress.progress(ab_done / total_n if total_n else 0)
+
+        order = {a["id"]: i for i, a in enumerate(ab_selected)}
+        ab_rows.sort(key=lambda r: order.get(r["id"], 0))
+        ab_total = len(ab_rows)
+        if resumed_n:
+            ab_status.success(f"✅ Done — {ab_total}/{total_n} attacks evaluated (resumed {resumed_n} from checkpoint).")
+        else:
+            ab_status.success(f"✅ Done — {ab_total} attacks evaluated.")
 
         blocked_on = sum(1 for r in ab_rows if r["CSL ON (blocked)"] == "🚫")
         blocked_off = sum(1 for r in ab_rows if r["CSL OFF (blocked)"] == "🚫")
@@ -780,19 +837,35 @@ else:
     st.markdown("**Pipeline:** `MACD`")
     st.markdown("---")
 
+    cp_display = _checkpoint_path("eval", suite_name, start_idx, end_idx)
+    cp_rows = _load_checkpoint(cp_display)
+    if not st.session_state.get("eval_results") and cp_rows:
+        st.session_state.eval_results = {"MACD": cp_rows}
+        st.caption(f"💾 Loaded {len(cp_rows)} previously saved result(s) for this range from checkpoint.")
+
     run_btn = st.button("▶ Run Evaluation Suite", type="primary", use_container_width=True)
+    eval_restart = st.checkbox("🔄 Restart from scratch (ignore saved progress for this range)", value=False)
 
     if run_btn:
-        all_results = {"MACD": []}
-        progress = st.progress(0)
+        cp = _checkpoint_path("eval", suite_name, start_idx, end_idx)
+        if eval_restart:
+            cp.unlink(missing_ok=True)
+        all_results = {"MACD": _load_checkpoint(cp)}
+        done_ids = {e["id"] for e in all_results["MACD"]}
+        todo = [a for a in attacks if a["id"] not in done_ids]
+        resumed = len(all_results["MACD"])
+
+        progress = st.progress(resumed / total if total else 0)
         status   = st.empty()
         total    = len(attacks)
-        done     = 0
+        done     = resumed
 
         containers = {"MACD": st.empty()}
         html_logs = {"MACD": "<b>MACD Pipeline Logs</b><br>"}
 
-        for attack in attacks:
+        if resumed:
+            status.info(f"Resuming — {resumed}/{total} attacks already done (saved checkpoint).")
+        for attack in todo:
             pipe_name = "MACD"
             status.markdown(f"`[{pipe_name}]` Testing via Groq API `{attack['id']}` — {attack['category']}")
             t0 = time.time()
@@ -807,6 +880,7 @@ else:
                 "elapsed": elapsed,
                 "csl_trace": res.get("csl_trace"),
             }
+            _append_checkpoint(cp, entry)
             all_results[pipe_name].append(entry)
 
             reason_short = (res.get("block_reason") or "")[:120]
@@ -831,7 +905,12 @@ else:
 
             time.sleep(1)
 
-        status.markdown("✅ **Evaluation complete via Groq Cloud API!**")
+        order = {a["id"]: i for i, a in enumerate(attacks)}
+        all_results["MACD"].sort(key=lambda e: order.get(e["id"], 0))
+        if resumed:
+            status.success(f"✅ Done — {len(all_results['MACD'])}/{total} attacks evaluated (resumed {resumed} from checkpoint).")
+        else:
+            status.markdown("✅ **Evaluation complete via Groq Cloud API!**")
         st.session_state.eval_results = all_results
 
     # Render Evaluation Results Metric & Table
