@@ -47,7 +47,7 @@ def _load_groq_api_key() -> None:
 
 _load_groq_api_key()
 
-from pipelines.macd_pipeline_v2 import MACDPipelineV2
+from pipelines.macd_pipeline_v2_mp import MACDPipelineV2MP
 from evaluation.attack_dataset import ATTACK_DATASET, ALL_ATTACKS
 from config import (
     TARGET_MODEL,
@@ -377,7 +377,7 @@ div[data-testid="column"] .stButton > button:hover {
 @st.cache_resource
 def init_pipeline():
     """Cache the single current defense pipeline in memory."""
-    return MACDPipelineV2()
+    return MACDPipelineV2MP()
 
 macd_v2_pipeline = init_pipeline()
 
@@ -403,8 +403,8 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### 🧩 Current Pipeline")
-    st.markdown("**MACD**")
-    st.markdown("<small>Zero-Trust CSL + PQC hybrid key exchange + TrustStore</small>", unsafe_allow_html=True)
+    st.markdown("**MACD (distributed)**")
+    st.markdown("<small>Multiprocess agents + real IPC + ML-KEM-768 PQC handshake + Zero-Trust CSL + TrustStore</small>", unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("### 🤖 System Architecture")
@@ -445,7 +445,7 @@ st.markdown("""
 # INTERACTIVE MODE (MACD only)
 # ════════════════════════════════════════════════════════════
 if mode == "💬 Interactive":
-    st.markdown("**Running pipeline:** `MACD` — User Input → Pattern → 🔒CSL → Intent → 🔒CSL → Detection → 🔒CSL → Judge → 🔒CSL → Domain LLM (unprotected) → Guard → 🔒CSL → Final Decision")
+    st.markdown("**Running pipeline:** `MACD (distributed)` — User Input → Pattern → 🔒CSL → Intent → 🔒CSL → Detection → 🔒CSL → Judge → 🔒CSL → Domain LLM (unprotected) → Guard → 🔒CSL → Final Decision. Each agent runs in its own OS process; session keys are derived via ML-KEM-768 over a real IPC pipe.")
 
     # Render Chat History
     for msg in st.session_state.chat_history:
@@ -470,6 +470,14 @@ if mode == "💬 Interactive":
                         "Anti-Replay + Trust. ⚠️ Session keys are ML-KEM-768 PQC-derived "
                         "when liboqs-python is available, otherwise classical pre-shared."
                     )
+                    st.markdown("**🤝 Session-Key Handshake (per agent process, real IPC)**")
+                    for hs in getattr(macd_v2_pipeline, "handshake_log", []):
+                        st.markdown(
+                            f'<div class="csl-hop-ok">🤝 {hs["agent"]} — pid=<code>{hs["pid"]}</code> · '
+                            f'{hs["method"]} · {hs["channel"]} · {hs["status"]}</div>',
+                            unsafe_allow_html=True,
+                        )
+                    st.markdown("---")
                     for hop in msg["csl_trace"]:
                         trust_score = hop.get("trust_score")
                         trust_text = f' · trust={trust_score:.2f}' if isinstance(trust_score, (int, float)) else ''
@@ -662,6 +670,14 @@ else:
             if not traced:
                 continue
             with st.expander(f"🔒 {pipe_name} — {len(traced)} attacks with CSL trace"):
+                st.markdown("**🤝 Session-Key Handshake (per agent process, real IPC)**")
+                for hs in getattr(macd_v2_pipeline, "handshake_log", []):
+                    st.markdown(
+                        f'<div class="csl-hop-ok">🤝 {hs["agent"]} — pid=<code>{hs["pid"]}</code> · '
+                        f'{hs["method"]} · {hs["channel"]} · {hs["status"]}</div>',
+                        unsafe_allow_html=True,
+                    )
+                st.markdown("---")
                 for e in traced:
                     st.markdown(f"**{e['id']}** — `{e['category']}`")
                     for hop in e["csl_trace"]:
