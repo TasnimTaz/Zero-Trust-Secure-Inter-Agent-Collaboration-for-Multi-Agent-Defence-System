@@ -3,6 +3,7 @@ import streamlit as st
 import json
 import time
 import pandas as pd
+import itertools
 from pathlib import Path
 
 try:
@@ -394,10 +395,11 @@ with st.sidebar:
 
     mode = st.radio(
         "Select Mode",
-        ["💬 Interactive",
+         ["💬 Interactive",
          "📊 Evaluate — Moderate/Intermediate", "📊 Evaluate — Hard/Advanced",
          "📊 Evaluate — Extreme/Coordinator-Level", "📊 Evaluate — Full (90 attacks)",
-         "🧬 Evaluate — Adaptive (GCG, 12 attacks)"],
+         "🔬 CSL Attack Harness",
+         "🧪 CSL Ablation (ON vs OFF)"],
         label_visibility="collapsed",
     )
 
@@ -536,6 +538,206 @@ if mode == "💬 Interactive":
 
 
 # ════════════════════════════════════════════════════════════
+# CSL ATTACK HARNESS MODE
+# ════════════════════════════════════════════════════════════
+elif mode == "🔬 CSL Attack Harness":
+    st.markdown("### 🔬 CSL Attack Harness — Communication-Layer Defenses")
+    st.caption(
+        "Validates the Zero-Trust Communication Security Layer against the five "
+        "communication-level attacks from the problem statement: **Message Tampering, "
+        "Agent Impersonation, Replay Attacks, Communication Integrity Violations, and "
+        "Malicious Message Propagation** (TrustStore), plus a real pipeline CSL-hop injection."
+    )
+
+    harness_csl = st.radio(
+        "CSL Mode",
+        ["🔒 CSL ON (secure)", "⚠️ CSL OFF (baseline)"],
+        horizontal=True,
+        help="CSL OFF runs the pipeline-integration check under the plaintext baseline: the same "
+             "forged envelope is accepted and counted as a breach.",
+    )
+    harness_csl_enabled = harness_csl == "🔒 CSL ON (secure)"
+
+    run_btn = st.button("▶ Run CSL Attack Harness", type="primary", use_container_width=True)
+
+    if run_btn:
+        from scripts.run_csl_attack_harness import run_attack_tests
+
+        with st.spinner("Running 16 security checks against the CSL..."):
+            results = run_attack_tests(include_pipeline=True, csl_enabled=harness_csl_enabled)
+
+        passed = sum(1 for r in results if r["passed"])
+        failed = len(results) - passed
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Checks", len(results))
+        c2.metric("Blocked / OK", passed, delta=f"{passed}/{len(results)}")
+        c3.metric("Breached", failed, delta="⚠️" if failed else "✅", delta_color="inverse")
+
+        if failed == 0:
+            st.success("All communication-layer defenses held — zero breaches.")
+        elif not harness_csl_enabled:
+            st.error(
+                "**1 breach — the attacker-signed envelope was ACCEPTED without CSL.** "
+                "This is exactly what the Zero-Trust CSL prevents: the forged message "
+                "fails AES-256-GCM authentication/integrity when CSL is ON."
+            )
+        else:
+            st.error(f"{failed} checks breached the CSL!")
+
+        for attack, rows in itertools.groupby(results, key=lambda r: r["attack"]):
+            rows = list(rows)
+            with st.expander(f"🔒 {attack} — {sum(1 for r in rows if r['passed'])}/{len(rows)} passed"):
+                for r in rows:
+                    css = "csl-hop-ok" if r["passed"] else "csl-hop-fail"
+                    icon = "✅" if r["passed"] else "❌"
+                    st.markdown(f'<div class="{css}">{icon} {r["label"]} — {r["test"]}</div>', unsafe_allow_html=True)
+
+
+# ════════════════════════════════════════════════════════════
+# CSL ABLATION MODE (ON vs OFF)
+# ════════════════════════════════════════════════════════════
+elif mode == "🧪 CSL Ablation (ON vs OFF)":
+    st.markdown("### 🧪 CSL Ablation — CSL ON vs CSL OFF")
+    st.caption(
+        "Measures the Zero-Trust Communication Security Layer against the attack it "
+        "actually defends against: an **attacker forging the judge's verdict on the wire** "
+        "(message forgery / impersonation). With CSL **ON** the forged message fails the "
+        "AES-256-GCM authentication/integrity check and is **blocked at the CSL hop**. With "
+        "CSL **OFF** (plaintext baseline) the forgery passes straight through and the attack "
+        "**bypasses the defence**."
+    )
+
+    csl_state = st.radio(
+        "CSL Mode",
+        ["🔒 CSL ON (secure)", "⚠️ CSL OFF (baseline)"],
+        horizontal=True,
+    )
+    csl_enabled = csl_state == "🔒 CSL ON (secure)"
+
+    st.markdown("---")
+    st.markdown("#### Single prompt test")
+    col_in, col_btn = st.columns([5, 1])
+    with col_in:
+        ab_prompt = st.text_input(
+            "Prompt",
+            placeholder="Enter a prompt or attack to test with the selected CSL mode...",
+            label_visibility="collapsed",
+        )
+    with col_btn:
+        test_btn = st.button("Test →", use_container_width=True)
+    ab_inject = st.checkbox("⚔️ Simulate attacker forging the judge's verdict on the wire", value=True)
+
+    if test_btn and ab_prompt.strip():
+        with st.spinner(f"Running with CSL {'ON' if csl_enabled else 'OFF'}" +
+                        (" + attacker injection" if ab_inject else "") + " via Groq Cloud..."):
+            res = macd_v2_pipeline.run(ab_prompt, csl_enabled=csl_enabled, attacker_inject=ab_inject)
+
+        csl_badge = "🔒 CSL ON" if csl_enabled else "⚠️ CSL OFF (baseline)"
+        inject_badge = " + ⚔️ forged judge verdict" if ab_inject else ""
+        if res["blocked"]:
+            st.error(f"🚫 BLOCKED @ {res.get('block_stage')} — {res.get('block_reason')}")
+            st.code(res["output"], language=None)
+        else:
+            st.warning(f"⚠️ BYPASSED — attack got through{csl_badge}{inject_badge}")
+            st.code(res["output"], language=None)
+        st.markdown(f"**Category:** `{res.get('category')}` · **Confidence:** {res.get('confidence')}")
+
+        with st.expander("🔐 CSL Hop Trace"):
+            for hop in res.get("csl_trace") or []:
+                trust_score = hop.get("trust_score")
+                trust_text = f' · trust={trust_score:.2f}' if isinstance(trust_score, (int, float)) else ''
+                if not hop.get("csl", True):
+                    st.markdown(
+                        f'<div class="csl-hop-fail">⚠️ {hop["stage"]} — sender=<code>{hop["sender"]}</code> · '
+                        f'CSL DISABLED · plaintext passthrough{trust_text}</div>',
+                        unsafe_allow_html=True,
+                    )
+                elif hop["verified"]:
+                    st.markdown(
+                        f'<div class="csl-hop-ok">✅ {hop["stage"]} — sender=<code>{hop["sender"]}</code> · '
+                        f'🔒 AES-256-GCM · verified{trust_text}</div>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        f'<div class="csl-hop-fail">❌ {hop["stage"]} — VERIFICATION FAILED — forged message '
+                        f'rejected{trust_text}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+    st.markdown("---")
+    st.markdown("#### Batch ASR comparison — attacker injects a forged judge verdict")
+    st.caption(
+        "Each attack runs twice under an active attacker that forges the judge's verdict: "
+        "once with CSL ON (forgery should be blocked) and once with CSL OFF (forgery should "
+        "bypass). The ASR gap is the CSL's contribution."
+    )
+    ab_suite_map = {
+        "Moderate / Intermediate": "moderate_intermediate",
+        "Hard / Advanced": "hard_advanced",
+        "Extreme / Coordinator-Level": "extreme_coordinator",
+        "Full (90 attacks)": "full",
+    }
+    ab_suite_name = st.selectbox("Attack suite", list(ab_suite_map.keys()))
+    ab_attacks = ALL_ATTACKS if ab_suite_map[ab_suite_name] == "full" else ATTACK_DATASET[ab_suite_map[ab_suite_name]]
+    ab_full = len(ab_attacks)
+    ab_start, ab_end = st.slider(
+        "Attack range",
+        min_value=0,
+        max_value=ab_full,
+        value=(0, min(5, ab_full)),
+        step=1,
+        label_visibility="collapsed",
+    )
+    ab_selected = ab_attacks[ab_start:ab_end]
+    st.markdown(
+        f"**Suite:** `{ab_suite_name}` — attacks {ab_start}–{ab_end} selected ({len(ab_selected)} / {ab_full}) "
+        f"× 2 pipelines (CSL ON + CSL OFF), attacker injection active = **{len(ab_selected) * 2} evaluations**"
+    )
+
+    ab_run_btn = st.button("▶ Run ASR Comparison (CSL ON vs OFF, attacker-injected)", type="primary", use_container_width=True)
+
+    if ab_run_btn:
+        ab_progress = st.progress(0)
+        ab_status = st.empty()
+        ab_rows = []
+        ab_total = len(ab_selected)
+        ab_done = 0
+        for attack in ab_selected:
+            mode_rows = {}
+            for label, csl in [("csl_on", True), ("csl_off", False)]:
+                ab_status.markdown(f"`[{label}]` Testing via Groq API `{attack['id']}` — {attack['category']}")
+                res = macd_v2_pipeline.run(attack["input"], csl_enabled=csl, attacker_inject=True)
+                mode_rows[label] = res["blocked"]
+                time.sleep(1)
+            ab_rows.append({
+                "id": attack["id"],
+                "category": attack["category"],
+                "CSL ON (blocked)": "🚫" if mode_rows["csl_on"] else "❌ BYPASS",
+                "CSL OFF (blocked)": "🚫" if mode_rows["csl_off"] else "❌ BYPASS",
+            })
+            ab_done += 1
+            ab_progress.progress(ab_done / ab_total)
+
+        blocked_on = sum(1 for r in ab_rows if r["CSL ON (blocked)"] == "🚫")
+        blocked_off = sum(1 for r in ab_rows if r["CSL OFF (blocked)"] == "🚫")
+        asr_on = round((ab_total - blocked_on) / ab_total * 100, 2)
+        asr_off = round((ab_total - blocked_off) / ab_total * 100, 2)
+
+        c1, c2 = st.columns(2)
+        c1.metric("ASR — CSL ON", f"{asr_on}%", delta=f"{blocked_on}/{ab_total} blocked")
+        c2.metric("ASR — CSL OFF", f"{asr_off}%", delta=f"{blocked_off}/{ab_total} blocked", delta_color="inverse")
+
+        st.dataframe(pd.DataFrame(ab_rows), use_container_width=True, hide_index=True)
+        st.success(
+            "**CSL contribution under active wire forgery:** ASR drops from "
+            f"**{asr_off}%** (CSL OFF, forged verdict accepted) to **{asr_on}%** "
+            f"(CSL ON, forged verdict rejected at the CSL hop)."
+        )
+
+
+# ════════════════════════════════════════════════════════════
 # EVALUATION MODES
 # ════════════════════════════════════════════════════════════
 else:
@@ -544,22 +746,12 @@ else:
         "📊 Evaluate — Hard/Advanced":              ("hard_advanced",         ATTACK_DATASET["hard_advanced"]),
         "📊 Evaluate — Extreme/Coordinator-Level":  ("extreme_coordinator",   ATTACK_DATASET["extreme_coordinator"]),
         "📊 Evaluate — Full (90 attacks)":          ("full",                  ALL_ATTACKS),
-        "🧬 Evaluate — Adaptive (GCG, 12 attacks)": ("adaptive_gcg",          ATTACK_DATASET["adaptive_gcg"]),
     }
     suite_name, attacks = suite_map[mode]
     full_count = len(attacks)
 
-    if suite_name == "adaptive_gcg":
-        st.info(
-            "🧬 **Adaptive suite**: এই ১২টা attack input GCG দিয়ে আগে থেকে "
-            "অপ্টিমাইজ করা adversarial suffix (AdaptiveAttackAgent, InjecAgent "
-            "`InstructionalPrevention` baseline-এর বিরুদ্ধে ট্রেইন করা)। এখানে কোনো "
-            "নতুন GCG training হচ্ছে না — শুধু আগে-জেনারেট-করা string-গুলো এই "
-            "সিস্টেমের বর্তমান MACD pipeline-e replay করে ASR মাপা হচ্ছে।"
-        )
-
     st.markdown("**Select attack range to test (start – end index)**")
-    default_end = full_count if suite_name == "adaptive_gcg" else min(5, full_count)
+    default_end = min(5, full_count)
     start_idx, end_idx = st.slider(
         "Attack range",
         min_value=0,
