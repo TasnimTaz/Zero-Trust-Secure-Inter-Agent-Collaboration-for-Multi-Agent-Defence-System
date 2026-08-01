@@ -99,7 +99,7 @@ def _summarize(entries: list, pipeline_name: str) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run exact AdaptiveAttackAgent strategies against the MACD-v2 defense pipeline.")
+    parser = argparse.ArgumentParser(description="Run exact AdaptiveAttackAgent strategies against the MACD defense pipeline.")
     parser.add_argument("--repo-path", required=True, help="Path to AdaptiveAttackAgent clone")
     parser.add_argument("--model", required=True, help="Model path/name for AdaptiveAttackAgent run.py")
     parser.add_argument("--data-setting", default="base_subset", help="AdaptiveAttackAgent data setting")
@@ -142,7 +142,7 @@ def main() -> None:
         res = macd_v2.run(attack["input"])
         output = res.get("output", "") or ""
         entry = {
-            "pipeline": "MACD-v2",
+            "pipeline": "MACD",
             "attack_id": attack["id"],
             "category": attack["category"],
             "strategy": attack.get("strategy"),
@@ -160,7 +160,7 @@ def main() -> None:
 
     summaries = {
         "generated_attack_count": len(attacks),
-        "macd_v2": _summarize(macd_v2_entries, "MACD-v2"),
+        "macd_v2": _summarize(macd_v2_entries, "MACD"),
     }
 
     out_dir = (project_root / args.out_dir).resolve()

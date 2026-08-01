@@ -57,10 +57,9 @@ from config import (
     MACD_V2_CATEGORY_MODEL,
     MACD_V2_JUDGE_MODEL,
 )
-from commsec.comms import TrustStore
 
 st.set_page_config(
-    page_title="Multi-Agent LLM Defense Pipeline (Groq)",
+    page_title="Zero-Trust Secure Inter-Agent Collaboration for Multi-Agent Defence Systems",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -404,7 +403,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### 🧩 Current Pipeline")
-    st.markdown("**MACD-v2**")
+    st.markdown("**MACD**")
     st.markdown("<small>Zero-Trust CSL + PQC hybrid key exchange + TrustStore</small>", unsafe_allow_html=True)
 
     st.markdown("---")
@@ -437,15 +436,16 @@ with st.sidebar:
 # ── Header ───────────────────────────────────────────────────
 st.markdown("""
 <div class="main-header">
-    <h1>🛡️ Multi-Agent LLM Defense Pipeline</h1>
+    <h1>🛡️ Zero-Trust Secure Inter-Agent Collaboration for Multi-Agent Defence System</h1>
+    <p>Against Prompt Injection Attacks</p>
 </div>
 """, unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════
-# INTERACTIVE MODE (MACD-v2 only)
+# INTERACTIVE MODE (MACD only)
 # ════════════════════════════════════════════════════════════
 if mode == "💬 Interactive":
-    st.markdown("**Running pipeline:** `MACD-v2` — User Input → Pattern → Intent → Detection → Judge → Domain LLM → Guard")
+    st.markdown("**Running pipeline:** `MACD` — User Input → Pattern → 🔒CSL → Intent → 🔒CSL → Detection → 🔒CSL → Judge → 🔒CSL → Domain LLM (unprotected) → Guard → 🔒CSL → Final Decision")
 
     # Render Chat History
     for msg in st.session_state.chat_history:
@@ -462,26 +462,29 @@ if mode == "💬 Interactive":
                 unsafe_allow_html=True,
             )
 
-            # 🔐 Zero-Trust CSL security trace visualization (MACD-v2 only)
+            # 🔐 Zero-Trust CSL security trace visualization (MACD only)
             if msg.get("csl_trace"):
                 with st.expander(f"🔐 {msg.get('pipeline')} — Zero-Trust Security Trace"):
                     st.caption(
                         "Per-hop: Authentication + Encryption (AES-256-GCM) + Integrity + "
-                        "Anti-Replay. ⚠️ Classical crypto — **not PQC/Quantum** (pre-shared "
-                        "symmetric keys); PQC KEM integration is future work."
+                        "Anti-Replay + Trust. ⚠️ Session keys are ML-KEM-768 PQC-derived "
+                        "when liboqs-python is available, otherwise classical pre-shared."
                     )
                     for hop in msg["csl_trace"]:
+                        trust_score = hop.get("trust_score")
+                        trust_text = f' · trust={trust_score:.2f}' if isinstance(trust_score, (int, float)) else ''
+                        pqc_text = ' · PQC' if hop.get("pqc") else ' · classical'
                         if hop["verified"]:
                             st.markdown(
                                 f'<div class="csl-hop-ok">✅ {hop["stage"]} — sender=<code>{hop["sender"]}</code> · '
-                                f'🔒 AES-256-GCM · 🧾 msg_id=<code>{str(hop["msg_id"])[:12]}…</code> · '
+                                f'🔒 AES-256-GCM{pqc_text}{trust_text} · 🧾 msg_id=<code>{str(hop["msg_id"])[:12]}…</code> · '
                                 f'authenticated · integrity-verified · replay-checked</div>',
                                 unsafe_allow_html=True,
                             )
                         else:
                             st.markdown(
                                 f'<div class="csl-hop-fail">❌ {hop["stage"]} — sender=<code>{hop["sender"]}</code> · '
-                                f'VERIFICATION FAILED (auth/integrity/replay)</div>',
+                                f'VERIFICATION FAILED (auth/integrity/replay){trust_text}</div>',
                                 unsafe_allow_html=True,
                             )
 
@@ -510,7 +513,7 @@ if mode == "💬 Interactive":
     if send and user_input.strip():
         st.session_state.chat_history.append({"role": "user", "content": user_input})
 
-        with st.spinner("[MACD-v2] Processing via Groq Cloud..."):
+        with st.spinner("[MACD] Processing via Groq Cloud..."):
             result = macd_v2_pipeline.run(user_input)
         st.session_state.chat_history.append({
             "role": "bot",
@@ -518,7 +521,7 @@ if mode == "💬 Interactive":
             "blocked": result["blocked"],
             "stage": result.get("block_stage"),
             "reason": result.get("block_reason"),
-            "pipeline": "MACD-v2",
+            "pipeline": "MACD",
             "csl_trace": result.get("csl_trace"),
         })
         st.rerun()
@@ -544,7 +547,7 @@ else:
             "অপ্টিমাইজ করা adversarial suffix (AdaptiveAttackAgent, InjecAgent "
             "`InstructionalPrevention` baseline-এর বিরুদ্ধে ট্রেইন করা)। এখানে কোনো "
             "নতুন GCG training হচ্ছে না — শুধু আগে-জেনারেট-করা string-গুলো এই "
-            "সিস্টেমের বর্তমান MACD-v2 pipeline-e replay করে ASR মাপা হচ্ছে।"
+            "সিস্টেমের বর্তমান MACD pipeline-e replay করে ASR মাপা হচ্ছে।"
         )
 
     st.markdown("**Select attack range to test (start – end index)**")
@@ -563,23 +566,23 @@ else:
         f"**Suite:** `{suite_name}` — **attacks {start_idx}–{end_idx} selected "
         f"({len(attacks)} / {full_count})** × 1 pipeline = **{len(attacks)} evaluations**"
     )
-    st.markdown("**Pipeline:** `MACD-v2`")
+    st.markdown("**Pipeline:** `MACD`")
     st.markdown("---")
 
     run_btn = st.button("▶ Run Evaluation Suite", type="primary", use_container_width=True)
 
     if run_btn:
-        all_results = {"MACD-v2": []}
+        all_results = {"MACD": []}
         progress = st.progress(0)
         status   = st.empty()
         total    = len(attacks)
         done     = 0
 
-        containers = {"MACD-v2": st.empty()}
-        html_logs = {"MACD-v2": "<b>MACD-v2 Pipeline Logs</b><br>"}
+        containers = {"MACD": st.empty()}
+        html_logs = {"MACD": "<b>MACD Pipeline Logs</b><br>"}
 
         for attack in attacks:
-            pipe_name = "MACD-v2"
+            pipe_name = "MACD"
             status.markdown(f"`[{pipe_name}]` Testing via Groq API `{attack['id']}` — {attack['category']}")
             t0 = time.time()
             res = macd_v2_pipeline.run(attack["input"])
@@ -677,24 +680,6 @@ else:
                                 unsafe_allow_html=True,
                             )
                     st.markdown("---")
-
-        st.markdown("### 🧪 Trust Decay Demo")
-        st.caption(
-            "This demo intentionally records repeated CSL failures for one agent so the UI shows a trust score below 1.00. "
-            "It does not change the main evaluation results above."
-        )
-        demo_store = TrustStore()
-        demo_agent = "pattern_expert"
-        demo_rows = [{"step": "baseline", "agent": demo_agent, "trust_score": round(demo_store.score_of(demo_agent), 2), "event": "initial trust"}]
-        for idx in range(1, 5):
-            score = demo_store.record_failure(demo_agent)
-            demo_rows.append({
-                "step": f"failure_{idx}",
-                "agent": demo_agent,
-                "trust_score": round(score, 2),
-                "event": "forced verification failure",
-            })
-        st.dataframe(pd.DataFrame(demo_rows), use_container_width=True, hide_index=True)
 
         st.markdown("### Security Category Breakdown")
         rows = []

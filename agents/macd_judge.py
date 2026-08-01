@@ -1,7 +1,8 @@
 import json
 import logging
-from config import DEFENSE_MODEL, MACD_JUDGE_SYSTEM_PROMPT, GROQ_CLIENT
+from config import DEFENSE_MODEL, MACD_JUDGE_SYSTEM_PROMPT, GROQ_CLIENT, AGENT_KEYS
 from agents.groq_utils import safe_completion
+from commsec.comms import Signer
 
 
 class MACDJudgeAgent:
@@ -9,10 +10,11 @@ class MACDJudgeAgent:
     MACD Agent 4 (re-mapped from MACD paper's Coordinator Agent).
     """
 
-    def __init__(self, model: str = None):
+    def __init__(self, model: str = None, signing_key: bytes = None):
         self.client = GROQ_CLIENT
         self.model = model or DEFENSE_MODEL
         self.system_prompt = MACD_JUDGE_SYSTEM_PROMPT
+        self.signer = Signer(key=signing_key or AGENT_KEYS.get("judge"))
         print(f"[MACDJudgeAgent] Ready via Groq using {self.model}")
 
     @staticmethod
@@ -25,9 +27,11 @@ class MACDJudgeAgent:
                 raw = raw[4:]
         return raw.strip()
 
-    def synthesize(self, user_input: str, pattern_verdict: dict, intent_verdict: dict, category_verdict: dict) -> tuple[bool, str, str, float]:
+    def synthesize(self, user_input: str, pattern_verdict: dict, intent_verdict: dict, category_verdict: dict) -> dict:
         """
-        Returns: (is_safe, category, reason, confidence)
+        Returns a CSL-signed envelope whose payload is:
+        {"agent": "judge", "sender": "judge", "is_safe": bool, "category": str,
+         "reason": str, "confidence": float}
         """
         # টাইপ সেফটি নিশ্চিত করতে ডিকশনারি না হলে খালি ডিকশনারি সেট করা
         pattern_verdict = pattern_verdict if isinstance(pattern_verdict, dict) else {}
@@ -74,7 +78,14 @@ class MACDJudgeAgent:
             reason = result.get("reason", "")
             confidence = float(result.get("confidence", 1.0))
 
-            return is_safe, category, reason, confidence
+            return self.signer.sign({
+                "agent": "judge",
+                "sender": "judge",
+                "is_safe": is_safe,
+                "category": category,
+                "reason": reason,
+                "confidence": confidence,
+            })
 
         except (json.JSONDecodeError, KeyError, Exception) as e:
             logging.warning(f"[MACDJudgeAgent Exception Catch]: Parsing failed, falling back to strict check. Error: {e}")
@@ -92,12 +103,14 @@ class MACDJudgeAgent:
             c_flag = is_flagged(category_verdict, "matches_known_attack")
             
             any_flagged = p_flag or i_flag or c_flag
-            
+
             # সিকিউরিটি ফ্রেমওয়ার্কের নিয়ম অনুযায়ী: জাজ ফেইল করলে এবং কোনো এক্সপার্ট ফ্লাগ দিলে 
             # সেটিকে অনিরাপদ (is_safe = False) ধরাটাই শ্রেয়।
-            return (
-                not any_flagged,
-                category_verdict.get("category", "unknown") if any_flagged else "safe",
-                f"MACDJudgeAgent error/fail-safe strict validation triggered: {str(e)}",
-                0.5 if any_flagged else 1.0,
-            )
+            return self.signer.sign({
+                "agent": "judge",
+                "sender": "judge",
+                "is_safe": not any_flagged,
+                "category": category_verdict.get("category", "unknown") if any_flagged else "safe",
+                "reason": f"MACDJudgeAgent error/fail-safe strict validation triggered: {str(e)}",
+                "confidence": 0.5 if any_flagged else 1.0,
+            })

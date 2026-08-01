@@ -19,7 +19,7 @@ from config import (
     AGENT_KEYS,
 )
 from agents.groq_utils import safe_completion
-from commsec.comms import verify_message, MessageReplayStore, TrustStore
+from commsec.comms import Signer, verify_message, MessageReplayStore, TrustStore
 from commsec.pqc import PQCIdentity, orchestrator_encapsulate, PQC_AVAILABLE
 
 
@@ -53,16 +53,18 @@ class DomainLLM:
 class GuardAgent:
     """Current Groq-backed output validator used after the domain model."""
 
-    def __init__(self):
+    def __init__(self, signing_key: bytes = None):
         self.client = GROQ_CLIENT
         self.model = DEFENSE_MODEL
         self.system_prompt = GUARD_SYSTEM_PROMPT
+        self.signer = Signer(key=signing_key or AGENT_KEYS.get("guard"))
         print(f"[GuardAgent] Ready via Groq using {self.model}")
 
     def get_refusal(self) -> str:
         return SAFE_REFUSAL_MSG
 
-    def validate(self, response_text: str) -> tuple[bool, str, str]:
+    def validate(self, response_text: str) -> dict:
+        """Returns a CSL-signed envelope whose payload contains is_safe/cleaned_response/reason."""
         try:
             completion = safe_completion(
                 self.client,
@@ -91,26 +93,43 @@ class GuardAgent:
             reason = result.get("reason", "")
             cleaned = result.get("cleaned_response", "")
 
-            return is_safe, cleaned, reason
+            return self.signer.sign({
+                "agent": "guard",
+                "sender": "guard",
+                "is_safe": is_safe,
+                "cleaned_response": cleaned,
+                "reason": reason,
+            })
         except (json.JSONDecodeError, KeyError, Exception) as e:
-            return False, "", f"Guard error/fail-safe: {str(e)}"
+            return self.signer.sign({
+                "agent": "guard",
+                "sender": "guard",
+                "is_safe": False,
+                "cleaned_response": "",
+                "reason": f"Guard error/fail-safe: {str(e)}",
+            })
 
 
 class MACDPipelineV2:
     """
-    MACD-v2 — Zero-Trust Sequential Pipeline with PQC-derived session keys
+    MACD — Zero-Trust Sequential Pipeline with PQC-derived session keys
     and longitudinal trust scoring.
 
     User Prompt
       -> Input Analysis Agent (Pattern Expert)
       -> Communication Security Layer (PQC-derived AES-256-GCM: auth + encrypt + integrity + anti-replay + trust)
-      -> Intent Analysis Agent (Intent Expert)
+      -> Intent Analysis Agent
       -> Communication Security Layer
       -> Prompt Injection Detection Agent (Category Expert)
       -> Communication Security Layer
       -> Judge Agent
+      -> Communication Security Layer
       -> Execution Validation (Domain LLM + Guard)
       -> Final Decision
+
+    CSL scope: the three expert hops (Pattern/Intent/Category), the Judge hop
+    and the Guard hop are all signed + verified (5 CSL hops total). The Domain
+    LLM is the trusted target model and is intentionally NOT wrapped in CSL.
 
     At init, the orchestrator performs an ML-KEM-768 handshake with each
     expert agent (if liboqs-python is installed) to derive a fresh AES-256
@@ -130,12 +149,12 @@ class MACDPipelineV2:
         self.pqc_active = PQC_AVAILABLE
         if not PQC_AVAILABLE:
             warnings.warn(
-                "liboqs-python not installed -- MACD-v2 CSL is running on classical pre-shared AES-256-GCM keys only, NOT PQC-derived session keys. Run: pip install liboqs-python --break-system-packages",
+                "liboqs-python not installed -- MACD CSL is running on classical pre-shared AES-256-GCM keys only, NOT PQC-derived session keys. Run: pip install liboqs-python --break-system-packages",
                 stacklevel=2,
             )
 
         session_keys = {}
-        for name in ("pattern_expert", "intent_expert", "category_expert"):
+        for name in ("pattern_expert", "intent_expert", "category_expert", "judge", "guard"):
             if PQC_AVAILABLE:
                 identity = PQCIdentity(name)
                 kem_ciphertext, orch_side_key = orchestrator_encapsulate(identity.public_key)
@@ -148,9 +167,9 @@ class MACDPipelineV2:
         self.pattern_expert = PatternExpertAgent(model=MACD_V2_PATTERN_MODEL, signing_key=session_keys["pattern_expert"])
         self.intent_expert = IntentExpertAgent(model=MACD_V2_INTENT_MODEL, signing_key=session_keys["intent_expert"])
         self.category_expert = CategoryExpertAgent(model=MACD_V2_CATEGORY_MODEL, signing_key=session_keys["category_expert"])
-        self.judge = MACDJudgeAgent(model=MACD_V2_JUDGE_MODEL)
+        self.judge = MACDJudgeAgent(model=MACD_V2_JUDGE_MODEL, signing_key=session_keys["judge"])
         self.llm = DomainLLM()
-        self.guard = GuardAgent()
+        self.guard = GuardAgent(signing_key=session_keys["guard"])
         self._session_keys = session_keys
 
     def _hop(self, signed_msg: dict, key_name: str, stage_name: str):
@@ -269,10 +288,26 @@ class MACDPipelineV2:
             return out
         agent_verdicts["category_expert"] = category_payload
 
-        # Judge Agent — synthesizes the three verified verdicts
-        is_safe, category, reason, confidence = self.judge.synthesize(
+        # Judge Agent — synthesizes the three verified verdicts (CSL-hop 4)
+        signed_judge = self.judge.synthesize(
             user_input, pattern_payload, intent_payload, category_payload
         )
+        judge_payload, ok4, t4 = self._hop(signed_judge, "judge", "Judge Synthesis")
+        csl_trace.append(t4)
+        if not ok4:
+            out = self._csl_block("judge", t4.get("reason"))
+            out.update({
+                "input": user_input,
+                "output": self.guard.get_refusal(),
+                "agent_verdicts": agent_verdicts,
+                "csl_trace": csl_trace,
+            })
+            return out
+
+        is_safe = judge_payload["is_safe"]
+        category = judge_payload["category"]
+        reason = judge_payload["reason"]
+        confidence = judge_payload["confidence"]
 
         if not is_safe:
             return {
@@ -289,9 +324,23 @@ class MACDPipelineV2:
                 "csl_trace": csl_trace,
             }
 
-        # Execution Validation: Domain LLM + Guard
+        # Execution Validation: Domain LLM (unprotected, trusted target) + Guard (CSL-hop 5)
         raw_response = self.llm.generate(user_input)
-        is_safe, cleaned, guard_reason = self.guard.validate(raw_response)
+        signed_guard = self.guard.validate(raw_response)
+        guard_payload, ok5, t5 = self._hop(signed_guard, "guard", "Execution Validation (Guard)")
+        csl_trace.append(t5)
+        if not ok5:
+            out = self._csl_block("guard", t5.get("reason"))
+            out.update({
+                "input": user_input,
+                "output": self.guard.get_refusal(),
+                "agent_verdicts": agent_verdicts,
+                "csl_trace": csl_trace,
+                "raw_response": raw_response,
+            })
+            return out
+
+        is_safe, cleaned, guard_reason = guard_payload["is_safe"], guard_payload["cleaned_response"], guard_payload["reason"]
 
         if not is_safe:
             return {

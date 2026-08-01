@@ -1,10 +1,10 @@
 # Multi-Agent LLM Defense System
 
-Groq-backed prompt-injection defense system focused on the current MACD-v2 pipeline.
+Groq-backed prompt-injection defense system focused on the current MACD pipeline.
 
 ## Current Architecture
 
-- MACD-v2 sequential defense pipeline
+- MACD sequential defense pipeline
 - Zero-Trust CSL with AES-256-GCM per-hop verification
 - PQC hybrid key exchange via ML-KEM-768 when `liboqs-python` is available
 - `TrustStore`-based longitudinal agent trust scoring
@@ -13,25 +13,25 @@ Groq-backed prompt-injection defense system focused on the current MACD-v2 pipel
 
 ### Communication Security Layer (CSL) Scope
 
-The Zero-Trust CSL protects **only the three expert hops** of the pipeline:
+The Zero-Trust CSL protects **five hops** of the pipeline:
 
 ```text
 User Prompt
-  -> Pattern Expert -> CSL -> Intent Expert -> CSL -> Category Expert -> CSL -> Judge
-  -> Execution Validation (Domain LLM + Guard) -> Final Decision
+  -> Pattern Expert -> CSL -> Intent Expert -> CSL -> Category Expert -> CSL
+  -> Judge -> CSL -> Execution Validation (Domain LLM + Guard -> CSL)
+  -> Final Decision
 ```
 
 Each CSL hop provides: Authentication + Encryption (AES-256-GCM, PQC-derived
 session keys when available) + Integrity Verification + Anti-Replay Protection
 + Trust Verification.
 
-> **Important (honest scope):** The **Judge, Domain LLM, and Guard stages are
-> NOT wrapped in the CSL.** They are the final decision-making stages and their
-> messages are not signed/verified/trust-checked. The `AGENT_KEY_JUDGE` config
-> key currently exists but is not used by any signer. So the "every message
-> continuously verified" claim applies only to the three expert hops, not the
-> full pipeline. If full-chain Zero-Trust is desired, the Judge and the
-> Execution Validation stage would need to be added to the CSL.
+> **Important (honest scope):** The **Domain LLM is NOT wrapped in the CSL** —
+> it is the trusted target model, and its raw query/response is intentionally
+> left unprotected. The Judge and Guard hops ARE CSL-protected (signed +
+> verified + trust-checked), so their verdicts cannot be silently tampered
+> with or replayed. All five protected hops (Pattern, Intent, Category, Judge,
+> Guard) get PQC-derived session keys when `liboqs-python` is available.
 
 ## Setup
 
@@ -76,7 +76,7 @@ That script demonstrates:
 
 ## Adaptive Evaluation
 
-Run strict AdaptiveAttackAgent evaluation against MACD-v2:
+Run strict AdaptiveAttackAgent evaluation against MACD:
 
 ```bash
 ./.venv/bin/python evaluation/run_exact_adaptive_eval.py \
@@ -122,5 +122,5 @@ The script writes JSON and JSONL results into `logs/`.
 ## Notes
 
 - If `liboqs-python` or the liboqs build dependencies are missing, the UI will show `classical` instead of `PQC`.
-- PQC (ML-KEM-768) session-key derivation currently covers only the three expert agents (Pattern, Intent, Category) in `macd_pipeline_v2.py`.
+- PQC (ML-KEM-768) session-key derivation currently covers five hops: Pattern, Intent, Category, Judge, and Guard.
 - Duplicate agent keys are rejected unless `ALLOW_SHARED_KEYS=1` is set explicitly for a controlled dev/test run.

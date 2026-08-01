@@ -152,10 +152,10 @@ MACD_KB = [
 LOG_PATH = "logs/results.jsonl"
 
 # ==========================================
-# MACD-v2: DIVERSE-MODEL ENSEMBLE CONFIG
+# MACD: DIVERSE-MODEL ENSEMBLE CONFIG
 # ==========================================
 # MACD-v1 এর সব agent একই DEFENSE_MODEL শেয়ার করে (controlled architecture-only
-# comparison এর জন্য)। MACD-v2 তে প্রতিটা agent ইচ্ছাকৃতভাবে ভিন্ন model পায়,
+# comparison এর জন্য)। MACD তে প্রতিটা agent ইচ্ছাকৃতভাবে ভিন্ন model পায়,
 # যাতে genuinely diverse/uncorrelated detection signal পাওয়া যায় — একই model-কে
 # চারবার জিজ্ঞেস করার বদলে সত্যিকারের ensemble তৈরি হয়।
 
@@ -197,6 +197,7 @@ _ENV_VARS = {
   "intent_expert": "AGENT_KEY_INTENT",
   "category_expert": "AGENT_KEY_CATEGORY",
   "judge": "AGENT_KEY_JUDGE",
+  "guard": "AGENT_KEY_GUARD",
 }
 
 _provided = {name: os.environ.get(env) for name, env in _ENV_VARS.items() if os.environ.get(env)}
