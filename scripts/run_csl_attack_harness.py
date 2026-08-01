@@ -163,6 +163,33 @@ def test_pipeline_hop_gate(csl_enabled: bool = True) -> None:
         pipe.shutdown()
 
 
+def test_forward_path_replay() -> None:
+    section("PIPELINE INTEGRATION: forward-path replay (orchestrator→worker)")
+    from pipelines.macd_pipeline_v2_mp import MACDPipelineV2MP
+
+    pipe = MACDPipelineV2MP()
+    try:
+        key = pipe._session_keys["guard"]
+        conn = pipe._agents["guard"][0]
+        signed = Signer(key=key, sender="orchestrator").sign(
+            {"response_text": "captured legit domain-LLM response", "csl": True}
+        )
+
+        conn.send(signed)
+        first = conn.recv()
+        report("forward task first delivery processed by worker", first.get("error") is None, expect_block=False)
+
+        conn.send(signed)  # replay the same msg_id
+        replayed = conn.recv()
+        report(
+            "replayed orchestrator task rejected by worker (per-process replay store)",
+            "forward-path authentication failed" in replayed.get("error", ""),
+        )
+        print(f"  replay response: {replayed.get('error')}")
+    finally:
+        pipe.shutdown()
+
+
 def run_attack_tests(include_pipeline: bool = True, csl_enabled: bool = True) -> list:
     RESULTS.clear()
     test_message_tampering()
@@ -172,6 +199,7 @@ def run_attack_tests(include_pipeline: bool = True, csl_enabled: bool = True) ->
     test_malicious_propagation_trust()
     if include_pipeline:
         test_pipeline_hop_gate(csl_enabled=csl_enabled)
+        test_forward_path_replay()
     return list(RESULTS)
 
 

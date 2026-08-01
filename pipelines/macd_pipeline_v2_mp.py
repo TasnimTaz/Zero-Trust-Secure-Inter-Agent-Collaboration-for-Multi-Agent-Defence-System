@@ -94,6 +94,7 @@ def _agent_worker(agent_name: str, model: str, conn):
 
     agent = _make_agent(agent_name, model)
     agent.signer = Signer(key=session_key)
+    forward_replay_store = MessageReplayStore()
     print(f"[MP:{agent_name}] worker pid={os.getpid()} ready")
 
     while True:
@@ -104,8 +105,23 @@ def _agent_worker(agent_name: str, model: str, conn):
         if task is None:
             break
         try:
+            csl = task.get("csl", True)
+            if csl:
+                # Forward-path CSL: every task the orchestrator ships into a
+                # worker is a signed envelope. The worker verifies it before
+                # trusting any content, so a pipe-level tamperer cannot forge
+                # or alter an instruction (including the domain-LLM response
+                # handed to the Guard for validation).
+                if not (verify_message(task, session_key, replay_store=forward_replay_store) and isinstance(task.get("payload"), dict)):
+                    conn.send({
+                        "agent": agent_name,
+                        "sender": agent_name,
+                        "error": "forward-path authentication failed: task not signed by orchestrator",
+                    })
+                    continue
+                task = task["payload"]
             env = _execute(agent, agent_name, task)
-            if task.get("csl", True):
+            if csl:
                 conn.send(env)
             else:
                 if verify_message(env, session_key) and isinstance(env.get("payload"), dict):
@@ -138,6 +154,12 @@ class MACDPipelineV2MP:
     secret against that public key and ships the KEM ciphertext back over
     the pipe. Key agreement is confirmed with an HMAC challenge/response,
     so neither side ever transmits the session key.
+
+    CSL is bidirectional: workers sign their verdicts back to the
+    orchestrator, and the orchestrator signs every task it ships into a
+    worker (including the domain-LLM response handed to the Guard). A
+    pipe-level tamperer can therefore neither forge a verdict nor alter an
+    instruction.
     """
 
     def __init__(self):
@@ -198,14 +220,27 @@ class MACDPipelineV2MP:
         task["csl"] = csl
         conn, _ = self._agents[name]
         try:
-            conn.send(task)
+            conn.send(self._outbound(name, csl, task))
             return conn.recv()
         except (EOFError, OSError, _pickle.UnpicklingError, ValueError):
             print(f"[MP:{name}] worker connection lost — restarting and retrying")
             self._restart_worker(name)
             conn, _ = self._agents[name]
-            conn.send(task)
+            conn.send(self._outbound(name, csl, task))
             return conn.recv()
+
+    def _outbound(self, name: str, csl: bool, task: dict) -> dict:
+        if not csl:
+            return task
+        key = self._session_keys.get(name)
+        if key is None:
+            return task
+        # Forward-path CSL: sign every task the orchestrator ships into a
+        # worker with that worker's session key, so the worker can verify the
+        # instruction really came from the trusted root and was not tampered
+        # with on the pipe. Re-signed per call, so a restart with a fresh
+        # session key still verifies.
+        return Signer(key=key, sender="orchestrator").sign(task)
 
     def _restart_worker(self, name: str) -> None:
         model = AGENT_MODELS[name]

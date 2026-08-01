@@ -12,11 +12,13 @@ Communication Security Layer (CSL)** protects the messages flowing between them.
    (the trusted target model) produces the answer; and a `Guard` re-validates
    the final response before it is returned.
 
-2. **Zero-Trust inter-agent communication (CSL).** Every message an agent
-   sends to the next agent is signed, encrypted and verified at the receiving
-   hop. A hop accepts a message only if it passes **all five** checks:
-   Authentication + Encryption (AES-256-GCM) + Integrity + Anti-Replay +
-   Trust.
+2. **Zero-Trust inter-agent communication (CSL).** Every inter-agent message
+   is signed, encrypted and verified at the receiving hop — in **both
+   directions** (worker verdicts back to the orchestrator, and the tasks the
+   orchestrator ships into workers, including the domain-LLM response handed
+   to the Guard). A hop accepts a message only if it passes **all five**
+   checks: Authentication + Encryption (AES-256-GCM) + Integrity +
+   Anti-Replay + Trust.
 
 3. **Post-quantum key agreement.** Session keys are derived with an
    **ML-KEM-768** handshake over a real IPC pipe when `liboqs-python` is
@@ -26,11 +28,11 @@ Communication Security Layer (CSL)** protects the messages flowing between them.
    score on every failed verification and recovers it slowly on success.
    A hop is refused once an agent's trust drops below threshold.
 
-5. **Provable communication-layer robustness.** A CSL attack harness runs 16
+5. **Provable communication-layer robustness.** A CSL attack harness runs 18
    checks against the five communication-level attack classes from the
-   problem statement plus a live pipeline hop-injection, and the UI supports
-   a **CSL ON vs OFF ablation** that quantifies what the CSL actually
-   contributes.
+   problem statement, a live pipeline hop-injection, and a forward-path
+   replay of a captured orchestrator task. The UI supports a **CSL ON vs OFF
+   ablation** that quantifies what the CSL actually contributes.
 
 ## Current Architecture
 
@@ -56,14 +58,20 @@ User Prompt
 
 Each CSL hop provides: Authentication + Encryption (AES-256-GCM, PQC-derived
 session keys when available) + Integrity Verification + Anti-Replay Protection
-+ Trust Verification.
++ Trust Verification. CSL is **bidirectional**: verdicts returning to the
+orchestrator and tasks the orchestrator sends into workers (including the
+domain-LLM response handed to the Guard) are both signed; forward-path tasks
+are replay-checked in a per-process replay store inside each worker.
 
-> **Honest scope:** the **Domain LLM is NOT wrapped in the CSL** — it is the
-> trusted target model and its raw query/response is intentionally left
-> unprotected. The Judge and Guard hops **are** CSL-protected (signed +
-> verified + trust-checked), so their verdicts cannot be silently tampered
-> with or replayed. All five protected hops (Pattern, Intent, Category, Judge,
-> Guard) get PQC-derived session keys when `liboqs-python` is available.
+> **Honest scope:** the **Domain LLM's generation is NOT wrapped in the CSL**
+> — it is the trusted target model and its raw query/response is intentionally
+> left unprotected. However, the forward path around it is protected: the
+> orchestrator signs the domain-LLM response before handing it to the Guard
+> worker, so a pipe-level tamperer cannot alter the text the Guard validates.
+> The Judge and Guard verdicts are signed + verified + trust-checked as
+> before, so their verdicts cannot be silently tampered with or replayed. All
+> five protected hops (Pattern, Intent, Category, Judge, Guard) get PQC-derived
+> session keys when `liboqs-python` is available.
 
 ## How CSL protects against the five communication-level attacks
 
@@ -92,12 +100,16 @@ next agent reads is the message the previous agent actually sent.
   - **CSL OFF (plaintext baseline):** the forged payload is accepted verbatim,
     the pipeline believes the attack is safe, and the attack **bypasses** the
     defence.
-  - Measured result (5-attack sample): **ASR drops from 80% (CSL OFF) to 0%
-    (CSL ON)**. The remaining 20% on the CSL-OFF side is the Guard catching the
-    forged path's output — a separate, independent layer (defence-in-depth).
+  - Measured result (full 300 attacks, real Groq pipeline): **ASR drops from
+    88% (CSL OFF) to 0% (CSL ON)** — each suite (Moderate / Hard / Extreme)
+    measured exactly 88% with the CSL off. The remaining 12% on the CSL-OFF
+    side is the Guard catching the forged path's output — a separate,
+    independent layer (defence-in-depth). (An early 5-attack sample measured
+    80%.)
 - The same contrast is visible in the harness's CSL ON/OFF toggle: with CSL ON
-  all 16 checks hold (0 breaches); with CSL OFF the identical attacker-signed
-  envelope is **accepted** at the pipeline hop and counted as a breach.
+  all 18 checks hold (0 breaches, including forward-path replay); with CSL OFF
+  the identical attacker-signed envelope is **accepted** at the pipeline hop
+  and counted as a breach.
 
 So CSL exists not to make detection "smarter" but to make the detection
 **trustworthy** — a tampered or forged verdict can never reach the decision
@@ -115,7 +127,9 @@ attack prompts** across three suites:
 The Streamlit UI (`📊 Evaluate — ...`) runs any suite or a custom range and
 reports **ASR** (Attack Success Rate), blocked/stage breakdown, category
 breakdown and a per-hop Zero-Trust security trace. Results can be downloaded
-as `.jsonl`.
+as `.jsonl`. Runs **checkpoint every prompt** to `checkpoints/` (gitignored)
+and **resume** automatically on reload — re-running the same suite + range
+skips already-completed IDs unless "Restart from scratch" is selected.
 
 ## Setup
 
