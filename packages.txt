@@ -1,0 +1,3 @@
+cmake
+libssl-dev
+build-essential
