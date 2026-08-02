@@ -20,14 +20,15 @@ class Evaluator:
 
     def run_suite(self, suite: str) -> dict:
         """
-        Run a specific suite: 'v1_taxonomy', 'phase2_chain', 'phase2_coordinator'
+        Run a specific suite: 'moderate_intermediate', 'hard_advanced',
+        'extreme_coordinator'
         Paper Table II: each suite tested separately.
         """
         attacks = ATTACK_DATASET[suite]
         return self._run(attacks, suite_name=suite)
 
     def run_all(self) -> dict:
-        """Run all 55 attacks across all suites."""
+        """Run all 300 attacks across all suites."""
         return self._run(ALL_ATTACKS, suite_name="full")
 
     def _run(self, attacks: list, suite_name: str) -> dict:

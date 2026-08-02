@@ -167,7 +167,7 @@ streamlit run app.py
 UI modes:
 - `💬 Interactive` — chat with the distributed MACD pipeline, per-hop CSL trace
 - `📊 Evaluate — ...` — run attack suites (Moderate / Hard / Extreme / Full 300)
-- `🔬 CSL Attack Harness` — 16 checks, with a **CSL ON/OFF** toggle
+- `🔬 CSL Attack Harness` — 18 checks, with a **CSL ON/OFF** toggle
 - `🧪 CSL Ablation (ON vs OFF)` — single-prompt or batch ASR comparison under
   an active forged-judge-verdict attack
 
@@ -176,7 +176,7 @@ Standalone scripts:
 ```bash
 ./.venv/bin/python scripts/verify_security_controls.py        # TrustStore + duplicate-key hard-fail
 ./.venv/bin/python scripts/run_mp_demo.py                     # distributed pipeline demo
-./.venv/bin/python scripts/run_csl_attack_harness.py          # 16-check CSL harness
+./.venv/bin/python scripts/run_csl_attack_harness.py          # 18-check CSL harness
 ```
 
 ## Project Structure
