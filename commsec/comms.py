@@ -75,21 +75,30 @@ class TrustStore:
         self.decay = decay
         self.recovery = recovery
 
+    @staticmethod
+    def _fix(score: float) -> float:
+        # Round to kill float accumulation drift, e.g. 1.0 - 0.3 - 0.3
+        # otherwise yields 0.39999... which is <.4 after only two failures.
+        return round(score, 10)
+
     def _get(self, agent: str) -> float:
         return self.scores.setdefault(agent, 1.0)
 
     def record_success(self, agent: str) -> float:
-        score = min(1.0, self._get(agent) + self.recovery)
+        score = self._fix(min(1.0, self._get(agent) + self.recovery))
         self.scores[agent] = score
         return score
 
     def record_failure(self, agent: str) -> float:
-        score = max(0.0, self._get(agent) - self.decay)
+        score = self._fix(max(0.0, self._get(agent) - self.decay))
         self.scores[agent] = score
         return score
 
     def is_trusted(self, agent: str) -> bool:
-        return self._get(agent) >= self.threshold
+        # Epsilon tolerance so an exact 0.4 equal to threshold isn't treated
+        # as untrusted due to a rounding tail (drift is already prevented above,
+        # this guards ties reached through other score sources).
+        return self._get(agent) >= self.threshold - 1e-9
 
     def score_of(self, agent: str) -> float:
         return self._get(agent)
