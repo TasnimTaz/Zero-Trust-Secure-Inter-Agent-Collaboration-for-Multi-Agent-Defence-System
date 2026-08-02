@@ -240,6 +240,10 @@ class MACDPipelineV2:
         }
 
     def run(self, user_input: str) -> dict:
+        # Fresh per-invocation stores so a prior run's trust decay / replay
+        # memory can't leak into this evaluation on a cached singleton pipeline.
+        self.replay_store = MessageReplayStore()
+        self.trust_store = TrustStore()
         agent_verdicts = {}
         csl_trace = []
 

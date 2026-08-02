@@ -90,7 +90,7 @@ def _agent_worker(agent_name: str, model: str, conn):
         conn.send(("proof", _mac(session_key, challenge)))
     else:
         conn.send(("no_pqc", True))
-        session_key = conn.recv()
+        _, session_key = conn.recv()
 
     agent = _make_agent(agent_name, model)
     agent.signer = Signer(key=session_key)
@@ -350,6 +350,12 @@ class MACDPipelineV2MP:
     def run(self, user_input: str, csl_enabled: bool = None, attacker_inject: bool = False) -> dict:
         if csl_enabled is not None:
             self.csl_enabled = csl_enabled
+        # Fresh per-invocation stores: the CSL-ON ablation intentionally forges
+        # the judge verdict to trigger a trust decay; without a reset that decay
+        # would carry over into every later "Evaluate" run on this cached
+        # pipeline and silently block at the trust gate.
+        self.replay_store = MessageReplayStore()
+        self.trust_store = TrustStore()
         agent_verdicts = {}
         csl_trace = []
 

@@ -853,11 +853,11 @@ else:
         all_results = {"MACD": _load_checkpoint(cp)}
         done_ids = {e["id"] for e in all_results["MACD"]}
         todo = [a for a in attacks if a["id"] not in done_ids]
+        total    = len(attacks)
         resumed = len(all_results["MACD"])
 
         progress = st.progress(resumed / total if total else 0)
         status   = st.empty()
-        total    = len(attacks)
         done     = resumed
 
         containers = {"MACD": st.empty()}

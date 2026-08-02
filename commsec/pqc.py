@@ -19,16 +19,33 @@ overclaim "PQC-secured" when it wasn't actually active for a given run.
 """
 
 import hashlib
+import warnings
+
+KEM_ALG = "ML-KEM-768"
+PQC_AVAILABLE = False
 
 try:
     import oqs
 
+    # `import oqs` can succeed even when the native liboqs C library is
+    # missing/broken -- e.g. `oqs.KeyEncapsulation("ML-KEM-768")` then raises
+    # RuntimeError.  Determine availability by actually constructing a KEM
+    # once, so the reported availability is truthful and callers can fall
+    # back to the classical pre-shared keys instead of crashing.
+    probe = oqs.KeyEncapsulation(KEM_ALG)
+    probe.free()
     PQC_AVAILABLE = True
-except ImportError:
+except (ImportError, RuntimeError, OSError):
     PQC_AVAILABLE = False
 
-
-KEM_ALG = "ML-KEM-768"
+if not PQC_AVAILABLE:
+    _oqs_import_error = None
+    warnings.warn(
+        "liboqs-python unavailable or broken -- PQC (ML-KEM-768) is DISABLED. "
+        "Callers must fall back to the classical pre-shared AGENT_KEYS. "
+        "This fallback is intentional and never silently overclaims PQC.",
+        stacklevel=2,
+    )
 
 
 class PQCIdentity:
@@ -46,15 +63,26 @@ class PQCIdentity:
             self._kem = None
             self.public_key = None
             return
-        self._kem = oqs.KeyEncapsulation(KEM_ALG)
+        self._kem = _try_kem()
         self.public_key = self._kem.generate_keypair()
 
     def decapsulate(self, kem_ciphertext: bytes) -> bytes:
         """Agent-side: derive the AES-256 session key from the KEM ciphertext."""
         if not PQC_AVAILABLE:
-            raise RuntimeError("liboqs-python not installed -- PQC unavailable")
+            raise RuntimeError("liboqs-python unavailable/broken -- PQC unavailable")
         shared_secret = self._kem.decap_secret(kem_ciphertext)
         return hashlib.sha256(shared_secret).digest()
+
+
+def _try_kem():
+    if not PQC_AVAILABLE:
+        raise RuntimeError("liboqs-python unavailable/broken -- PQC unavailable")
+    try:
+        return oqs.KeyEncapsulation(KEM_ALG)
+    except (RuntimeError, OSError) as e:
+        raise RuntimeError(
+            f"liboqs KeyEncapsulation({KEM_ALG}) failed -- native lib likely missing/broken: {e}"
+        ) from e
 
 
 def orchestrator_encapsulate(peer_public_key: bytes) -> tuple[bytes, bytes]:
@@ -62,8 +90,9 @@ def orchestrator_encapsulate(peer_public_key: bytes) -> tuple[bytes, bytes]:
     Orchestrator-side: encapsulate against an agent's ML-KEM public key.
     Returns (kem_ciphertext_to_send_to_agent, session_key_32_bytes).
     """
-    if not PQC_AVAILABLE:
-        raise RuntimeError("liboqs-python not installed -- PQC unavailable")
-    with oqs.KeyEncapsulation(KEM_ALG) as kem:
+    kem = _try_kem()
+    try:
         kem_ciphertext, shared_secret = kem.encap_secret(peer_public_key)
+    finally:
+        kem.free()
     return kem_ciphertext, hashlib.sha256(shared_secret).digest()
